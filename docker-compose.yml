@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+
+  ai_image_ollama:
+    image: ollama/ollama
+    container_name: ai_image_ollama
+    runtime: nvidia  # Use Nvidia runtime for GPU support
+    restart: always
+    tty: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_NUM_PARALLEL=4
+      - OLLAMA_MAX_LOADED_MODELS=4
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama:/root/.ollama
+    networks:
+      - ai_image_net
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+volumes:
+  ollama:
+
+networks:
+  ai_image_net:
+    driver: bridge
+
