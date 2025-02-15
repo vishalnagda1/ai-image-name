@@ -2,7 +2,6 @@ from ollama import Client
 
 client = Client(
     host="http://0.0.0.0:11435",
-    #   headers={'x-some-header': 'some-value'}
 )
 
 
@@ -14,8 +13,6 @@ def ai_image_name(image_path):
                 "role": "user",
                 "content": "give a valid name to this image, max length of name should be 30 characters long",
                 "images": ["./1.png"],
-                # 'images': ['./2.png']
-                # 'images': ['./3.png']
             },
         ],
     )
