@@ -1,10 +1,32 @@
 import os
 from pprint import pprint
 
+from ollama import Client
 from PIL import Image
 from tqdm import tqdm
 
-from .main import ai_image_name
+# from .main import ai_image_name
+
+
+client = Client(
+    host="http://0.0.0.0:11435",
+)
+
+
+def ai_image_name(image_path):
+    response = client.chat(
+        model="llava:7b",
+        messages=[
+            {
+                "role": "user",
+                "content": "give a valid name to this image, max length of name should be 30 characters long." \
+                            "do not include quotes around the name. The name should be separated by underscores." \
+                                "for example, if the image is a picture of a cat, the name should be cat_picture",
+                "images": [image_path],
+            },
+        ],
+    )
+    return response["message"]["content"]
 
 
 def get_image_dimensions(image_path):
@@ -88,7 +110,9 @@ def main():
     # Get the folder path from user input
     # folder_path = input("Enter the root folder path: ")
     folder_path = os.path.abspath(
-        os.path.expanduser(os.path.join("~/", "Downloads/IT Support Hardware"))
+        os.path.expanduser(
+            os.path.join("~/", "Downloads/IT Support-20250215T130156Z-001/IT Support")
+        )
     )
 
     pprint(f"folder path: {folder_path}")
