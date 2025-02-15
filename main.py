@@ -1,6 +1,28 @@
-def main():
-    print("Hello from image-id!")
+from ollama import Client
+
+client = Client(
+    host="",
+    #   headers={'x-some-header': 'some-value'}
+)
 
 
-if __name__ == "__main__":
-    main()
+def ai_image_name(image_path):
+    response = client.chat(
+        model="llava:34b",
+        messages=[
+            {
+                "role": "user",
+                "content": "give a valid name to this image, max length of name should be 30 characters long",
+                "images": ["./1.png"],
+                # 'images': ['./2.png']
+                # 'images': ['./3.png']
+            },
+        ],
+    )
+    return response["message"]["content"]
+
+
+image_paths = ["./1.png", "./2.png", "./3.png"]
+
+for image_path in image_paths:
+    print(ai_image_name(image_path))
