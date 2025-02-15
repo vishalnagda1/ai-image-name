@@ -1,14 +1,14 @@
 from ollama import Client
 
 client = Client(
-    host="",
+    host="http://0.0.0.0:11435",
     #   headers={'x-some-header': 'some-value'}
 )
 
 
 def ai_image_name(image_path):
     response = client.chat(
-        model="llava:34b",
+        model="llava:7b",
         messages=[
             {
                 "role": "user",
