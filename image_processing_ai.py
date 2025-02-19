@@ -1,32 +1,13 @@
 import os
+import shutil
 from pprint import pprint
 
-from ollama import Client
 from PIL import Image
 from tqdm import tqdm
 
-# from .main import ai_image_name
+from ai_image_name import ImageNameGenerator
 
-
-client = Client(
-    host="http://0.0.0.0:11435",
-)
-
-
-def ai_image_name(image_path):
-    response = client.chat(
-        model="llava:7b",
-        messages=[
-            {
-                "role": "user",
-                "content": "give a valid name to this image, max length of name should be 30 characters long." \
-                            "do not include quotes around the name. The name should be separated by underscores." \
-                                "for example, if the image is a picture of a cat, the name should be cat_picture",
-                "images": [image_path],
-            },
-        ],
-    )
-    return response["message"]["content"]
+ing = ImageNameGenerator(host="192.168.1.50:11435")
 
 
 def get_image_dimensions(image_path):
@@ -47,7 +28,7 @@ def resize_image(image_path, target_size):
             resized_img = img.resize(target_size, Image.Resampling.LANCZOS)
 
             # Get new AI-generated filename
-            new_name = ai_image_name(image_path)
+            new_name = ing.generate_name(image_path)
 
             # Create full path for new file with .jpg extension
             new_path = os.path.join(os.path.dirname(image_path), new_name + ".jpg")
@@ -106,6 +87,46 @@ def process_folder(folder_path):
             resize_image(img_path, (720, 480))
 
 
+def copy_images_to_single_folder(source_path, destination_folder):
+    """
+    Copy all images from nested folders to a single destination folder.
+
+    Args:
+        source_path (str): Path to the root folder containing nested folders with images
+        destination_folder (str): Name of the new folder where images will be moved
+    """
+    # Create destination folder if it doesn't exist
+    if not os.path.exists(destination_folder):
+        os.makedirs(destination_folder)
+
+    # List of common image extensions
+    image_extensions = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff")
+
+    # Walk through all directories and subdirectories
+    for root, dirs, files in os.walk(source_path):
+        for file in files:
+            # Check if the file is an image
+            if file.lower().endswith(image_extensions):
+                # Get the full path of the source file
+                source_file = os.path.join(root, file)
+
+                # Generate a unique filename to avoid overwrites
+                base_name = os.path.basename(file)
+                name, ext = os.path.splitext(base_name)
+                counter = 1
+                new_name = base_name
+
+                # If file with same name exists, add number to filename
+                while os.path.exists(os.path.join(destination_folder, new_name)):
+                    new_name = f"{name}_{counter}{ext}"
+                    counter += 1
+
+                # Copy the file to destination
+                destination_file = os.path.join(destination_folder, new_name)
+                shutil.copy(source_file, destination_file)
+                print(f"Copied: {source_file} -> {destination_file}")
+
+
 def main():
     # Get the folder path from user input
     # folder_path = input("Enter the root folder path: ")
@@ -125,6 +146,25 @@ def main():
     pprint(f"Processing folders in {folder_path}...")
     process_folder(folder_path)
     pprint("Image processing completed!")
+
+    base_folder_name = os.path.basename(folder_path)
+    new_folder_name = f"{base_folder_name} - images"
+
+    destination_folder = os.path.dirname(folder_path)
+    destination_folder = os.path.join(destination_folder, new_folder_name)
+
+    # Check if folder exists
+    if os.path.exists(destination_folder):
+        for item in os.listdir(destination_folder):
+            item_path = os.path.join(destination_folder, item)
+            if os.path.isfile(item_path):
+                os.remove(item_path)
+            elif os.path.isdir(item_path):
+                shutil.rmtree(item_path)
+    else:
+        os.makedirs(destination_folder, exist_ok=True)
+
+    copy_images_to_single_folder(folder_path, destination_folder)
 
 
 if __name__ == "__main__":
