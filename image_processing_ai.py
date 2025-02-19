@@ -129,10 +129,10 @@ def copy_images_to_single_folder(source_path, destination_folder):
 
 def main():
     # Get the folder path from user input
-    # folder_path = input("Enter the root folder path: ")
+    folder_path = input("Enter the folder path: ")
     folder_path = os.path.abspath(
         os.path.expanduser(
-            os.path.join("~/", "Downloads/IT Support-20250215T130156Z-001/IT Support")
+            os.path.join("~/", folder_path)
         )
     )
 
