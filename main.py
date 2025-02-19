@@ -26,4 +26,7 @@ def ai_image_name(image_path):
 image_paths = ["./1.png", "./2.png", "./3.png"]
 
 for image_path in image_paths:
-    print(ai_image_name(image_path))
+    ai_name = ai_image_name(image_path)
+    while len(ai_name) > 30 or any(c in ai_name for c in ['"', "'", " ", "."]):
+        ai_name = ai_image_name(image_path)
+    print(f"{os.path.basename(image_path)}: {ai_name}")
