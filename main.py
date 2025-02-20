@@ -6,7 +6,7 @@ import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import yaml
 from tqdm import tqdm
@@ -340,10 +340,10 @@ class ImageProcessingManager:
         output_dir: Optional[str] = None,
     ) -> Tuple[int, int, List[str], str]:
         """
-        Process images in all subfolders and generate report
+        Process images in all sub-folders and generate report
 
         Args:
-            root_folder (str): Path to root folder containing subfolders with images
+            root_folder (str): Path to root folder containing sub-folders with images
             banner_name (Optional[str]): Name pattern to identify banner images
             output_dir (Optional[str]): Directory where to save the CSV report
 
