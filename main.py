@@ -1,10 +1,12 @@
+import csv
 import logging
 import os
+import re
 import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 from tqdm import tqdm
@@ -70,6 +72,12 @@ def load_config(config_path: str = "config.yaml") -> ProcessingConfig:
     )
 
 
+def extract_folder_id(folder_name: str) -> Optional[str]:
+    """Extract the numeric ID from the beginning of a folder name"""
+    match = re.match(r"^\d+", folder_name)
+    return match.group(0) if match else None
+
+
 class ImageProcessingManager:
     def __init__(self, config: ProcessingConfig):
         self.config = config
@@ -77,6 +85,7 @@ class ImageProcessingManager:
         self.name_generator = ImageNameGenerator(
             host=config.ai_host, model=config.ai_model
         )
+        self.folder_results = {}  # Store processing results for reporting
 
     def identify_banner_by_dimensions(self, image_paths: List[Path]) -> Optional[Path]:
         """Identify the banner image based on dimensions"""
@@ -115,7 +124,9 @@ class ImageProcessingManager:
         clean_name = "".join(c for c in name if c.isalnum() or c in "- ").strip()
         return clean_name.replace(" ", "-")
 
-    def process_single_image(self, image_path: Path, is_banner: bool = False) -> bool:
+    def process_single_image(
+        self, image_path: Path, is_banner: bool = False
+    ) -> Tuple[bool, Optional[Path]]:
         """
         Process a single image including resizing and AI-based renaming
 
@@ -124,14 +135,13 @@ class ImageProcessingManager:
             is_banner: Whether the image is a banner image
 
         Returns:
-            bool: True if processing was successful, False otherwise
+            Tuple[bool, Optional[Path]]: (success status, path to processed image)
         """
         try:
             # Determine target size based on image type
             target_size = (
                 self.config.banner_size if is_banner else self.config.regular_size
             )
-
             logger.info(
                 f"Processing: {image_path.name} {'(banner)' if is_banner else ''}"
             )
@@ -164,33 +174,25 @@ class ImageProcessingManager:
                     os.remove(str(image_path))
 
                 logger.info(f"Renamed to: {final_path.name}")
+                return True, final_path
             else:
                 # If AI naming fails, keep the processed image with original name
                 logger.warning("AI naming failed, keeping original name")
-                success = True  # Still count as success since image was processed
-
-            return True
+                return True, Path(temp_path)
 
         except Exception as e:
             logger.error(f"Error processing {image_path.name}: {str(e)}")
-            return False
+            return False, None
 
     def process_directory(
         self, directory: Path, banner_name: Optional[str] = None
     ) -> Tuple[int, int, List[str]]:
-        """
-        Process all images in a directory
-
-        Args:
-            directory (Path): Directory path to process
-            banner_name (Optional[str]): Name pattern to identify banner images
-
-        Returns:
-            Tuple[int, int, List[str]]: (success_count, error_count, errors)
-        """
+        """Process all images in a directory"""
         success_count = 0
         error_count = 0
         errors = []
+        processed_banner = None
+        processed_inner = []
 
         try:
             # Collect valid image paths
@@ -228,10 +230,16 @@ class ImageProcessingManager:
             # Process images with progress bar
             for image_path in tqdm(image_paths, desc=f"Processing {directory.name}"):
                 try:
-                    processed = self.process_single_image(
-                        image_path, is_banner=(image_path == banner_image)
+                    is_banner = image_path == banner_image
+                    processed, final_path = self.process_single_image(
+                        image_path, is_banner
                     )
-                    if processed:
+
+                    if processed and final_path:
+                        if is_banner:
+                            processed_banner = final_path
+                        else:
+                            processed_inner.append(final_path)
                         success_count += 1
                     else:
                         error_count += 1
@@ -241,6 +249,9 @@ class ImageProcessingManager:
                     errors.append(error_msg)
                     error_count += 1
 
+            # Store results for reporting
+            self.folder_results[directory.name] = (processed_banner, processed_inner)
+
         except Exception as e:
             error_msg = f"Error processing directory {directory}: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
@@ -249,19 +260,65 @@ class ImageProcessingManager:
 
         return success_count, error_count, errors
 
+    def create_processing_report(self, root_folder: str) -> str:
+        """Create a CSV report of processed images"""
+        try:
+            root_path = Path(root_folder)
+            report_path = root_path / "image_processing_report.csv"
+
+            # Find the maximum number of inner images across all folders
+            max_inner_images = max(
+                len(inner_images)
+                for _, (_, inner_images) in self.folder_results.items()
+            )
+
+            # Prepare headers
+            headers = ["ID", "Folder Name", "Banner Image"]
+            headers.extend([f"Inner Image {i + 1}" for i in range(max_inner_images)])
+
+            with open(report_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+
+                # Sort folders by their numeric ID
+                sorted_folders = sorted(
+                    self.folder_results.items(),
+                    key=lambda x: int(extract_folder_id(x[0]))
+                    if extract_folder_id(x[0])
+                    else float("inf"),
+                )
+
+                for folder_name, (banner_image, inner_images) in sorted_folders:
+                    folder_id = extract_folder_id(folder_name)
+                    if not folder_id:
+                        continue
+
+                    # Prepare row data
+                    row = [
+                        folder_id,
+                        folder_name,
+                        banner_image.name if banner_image else "",
+                    ]
+
+                    # Add inner image names, padding with empty strings if necessary
+                    inner_image_names = [img.name for img in inner_images]
+                    row.extend(
+                        inner_image_names
+                        + [""] * (max_inner_images - len(inner_image_names))
+                    )
+
+                    writer.writerow(row)
+
+            return str(report_path)
+
+        except Exception as e:
+            logger.error(f"Error creating processing report: {str(e)}")
+            return ""
+
     def process_images(
         self, root_folder: str, banner_name: Optional[str] = None
-    ) -> Tuple[int, int, List[str]]:
-        """
-        Process images in all subfolders
-
-        Args:
-            root_folder (str): Path to root folder containing subfolders with images
-            banner_name (Optional[str]): Name pattern to identify banner images
-
-        Returns:
-            Tuple[int, int, List[str]]: (total_success, total_errors, all_errors)
-        """
+    ) -> Tuple[int, int, List[str], str]:
+        """Process images in all subfolders and generate report"""
         start_time = time.time()
         total_success = 0
         total_errors = 0
@@ -297,6 +354,9 @@ class ImageProcessingManager:
                     all_errors.append(error_msg)
                     total_errors += 1
 
+            # Generate report after processing
+            report_path = self.create_processing_report(root_folder)
+
             # Log completion time
             duration = time.time() - start_time
             logger.info(f"\nProcessing completed in {duration:.2f} seconds")
@@ -308,8 +368,9 @@ class ImageProcessingManager:
             logger.error(error_msg)
             all_errors.append(error_msg)
             total_errors += 1
+            report_path = ""
 
-        return total_success, total_errors, all_errors
+        return total_success, total_errors, all_errors, report_path
 
 
 def main():
@@ -331,8 +392,8 @@ def main():
             f"Banner identification: {'Using name pattern: ' + banner_name if banner_name else 'Using image dimensions'}"
         )
 
-        # Process images
-        success_count, error_count, errors = processor.process_images(
+        # Process images and generate report
+        success_count, error_count, errors, report_path = processor.process_images(
             root_folder, banner_name
         )
 
@@ -340,6 +401,11 @@ def main():
         logger.info("\nProcessing Summary:")
         logger.info(f"Successfully processed: {success_count} images")
         logger.info(f"Errors encountered: {error_count}")
+
+        if report_path:
+            logger.info(f"Report generated: {report_path}")
+        else:
+            logger.warning("Failed to generate processing report")
 
         if errors:
             logger.info("\nError Details:")
