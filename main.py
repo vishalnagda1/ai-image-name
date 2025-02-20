@@ -260,11 +260,29 @@ class ImageProcessingManager:
 
         return success_count, error_count, errors
 
-    def create_processing_report(self, root_folder: str) -> str:
-        """Create a CSV report of processed images"""
+    def create_processing_report(self, output_dir: str = None) -> str:
+        """
+        Create a CSV report of processed images
+
+        Args:
+            output_dir (str, optional): Directory where to save the CSV report.
+                                      If None, saves in the current working directory.
+
+        Returns:
+            str: Path to the generated CSV file
+        """
         try:
-            root_path = Path(root_folder)
-            report_path = root_path / "image_processing_report.csv"
+            # Determine output directory
+            if output_dir:
+                output_path = Path(output_dir)
+                # Create output directory if it doesn't exist
+                output_path.mkdir(parents=True, exist_ok=True)
+            else:
+                output_path = Path.cwd()
+
+            # Create report path with timestamp
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            report_path = output_path / f"image_processing_report_{timestamp}.csv"
 
             # Find the maximum number of inner images across all folders
             max_inner_images = max(
@@ -316,9 +334,22 @@ class ImageProcessingManager:
             return ""
 
     def process_images(
-        self, root_folder: str, banner_name: Optional[str] = None
+        self,
+        root_folder: str,
+        banner_name: Optional[str] = None,
+        output_dir: Optional[str] = None,
     ) -> Tuple[int, int, List[str], str]:
-        """Process images in all subfolders and generate report"""
+        """
+        Process images in all subfolders and generate report
+
+        Args:
+            root_folder (str): Path to root folder containing subfolders with images
+            banner_name (Optional[str]): Name pattern to identify banner images
+            output_dir (Optional[str]): Directory where to save the CSV report
+
+        Returns:
+            Tuple[int, int, List[str], str]: (total_success, total_errors, all_errors, report_path)
+        """
         start_time = time.time()
         total_success = 0
         total_errors = 0
@@ -355,7 +386,7 @@ class ImageProcessingManager:
                     total_errors += 1
 
             # Generate report after processing
-            report_path = self.create_processing_report(root_folder)
+            report_path = self.create_processing_report(output_dir)
 
             # Log completion time
             duration = time.time() - start_time
@@ -385,7 +416,12 @@ def main():
         banner_name = input(
             "Enter the banner image name pattern (press Enter to skip): "
         ).strip()
+        output_dir = input(
+            "Enter the output directory for the CSV report (press Enter for current directory): "
+        ).strip()
+
         banner_name = banner_name if banner_name else None
+        output_dir = output_dir if output_dir else None
 
         logger.info("\nStarting image processing...")
         logger.info(
@@ -394,7 +430,7 @@ def main():
 
         # Process images and generate report
         success_count, error_count, errors, report_path = processor.process_images(
-            root_folder, banner_name
+            root_folder, banner_name, output_dir
         )
 
         # Print summary
