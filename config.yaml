@@ -1,0 +1,22 @@
+# AI Service Configuration
+ai_host: "https://aiq-ollama.visions.team"
+ai_model: "llava:34b"
+
+# Image Processing Settings
+image_quality: 95
+banner_size: [1200, 502]
+regular_size: [720, 480]
+
+# Retry Configuration
+max_retries: 3
+retry_delay: 2
+
+# Supported Image Formats
+supported_extensions:
+  - ".jpg"
+  - ".jpeg"
+  - ".png"
+  - ".gif"
+  - ".bmp"
+  - ".tiff"
+  - ".webp"

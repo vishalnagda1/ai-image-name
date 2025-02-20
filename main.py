@@ -1,87 +1,210 @@
+import logging
 import os
+import time
+import traceback
+from dataclasses import dataclass
 from pathlib import Path
+from typing import List, Optional, Tuple
+
+import yaml
+from tqdm import tqdm
 
 from ai_image_name import ImageNameGenerator
 from utils.image import ImageProcessor
 
-# As it is a singleton class, so creating object here
-ing = ImageNameGenerator(host="https://aiq-ollama.visions.team", model="llava:34b")
-
-image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
-
-
-def identify_banner_by_dimensions(processor, image_paths):
-    """
-    Identify the banner image in a folder based on image dimensions
-
-    Args:
-        processor (ImageProcessor): Instance of ImageProcessor
-        image_paths (list): List of Path objects for images
-
-    Returns:
-        Path: Path object of the identified banner image
-    """
-    max_area = 0
-    banner_image = None
-
-    for img_path in image_paths:
-        try:
-            dimensions = processor.get_image_dimensions(str(img_path))
-            area = dimensions[0] * dimensions[1]
-            if area > max_area:
-                max_area = area
-                banner_image = img_path
-        except Exception as e:
-            print(f"Warning: Could not check dimensions of {img_path.name}: {e}")
-            continue
-
-    return banner_image
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("image_processing.log")],
+)
+logger = logging.getLogger(__name__)
 
 
-def process_images(root_folder, banner_name=None):
-    """
-    Process and rename images in all subfolders of the given root folder.
+@dataclass
+class ProcessingConfig:
+    """Configuration settings for image processing"""
 
-    Args:
-        root_folder (str): Path to the root folder containing subfolders with images
-        banner_name (str, optional): Name pattern to identify banner images
+    ai_host: str
+    ai_model: str
+    image_quality: int
+    banner_size: Tuple[int, int]
+    regular_size: Tuple[int, int]
+    max_retries: int
+    retry_delay: int
+    supported_extensions: set
 
-    Returns:
-        tuple: (success_count, error_count, list of errors)
-    """
+
+def load_config(config_path: str = "config.yaml") -> ProcessingConfig:
+    """Load configuration from YAML file or use defaults"""
+    defaults = {
+        "ai_host": "https://aiq-ollama.visions.team",
+        "ai_model": "llava:34b",
+        "image_quality": 95,
+        "banner_size": (1200, 502),
+        "regular_size": (720, 480),
+        "max_retries": 3,
+        "retry_delay": 2,
+        "supported_extensions": [
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".bmp",
+            ".tiff",
+            ".webp",
+        ],
+    }
+
     try:
-        # Validate root folder path
-        if not os.path.exists(root_folder):
-            raise ValueError(f"The specified path does not exist: {root_folder}")
-        if not os.path.isdir(root_folder):
-            raise ValueError(f"The specified path is not a directory: {root_folder}")
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                config_data = yaml.safe_load(f)
+                defaults.update(config_data)
+    except Exception as e:
+        logger.warning(f"Failed to load config file: {e}. Using defaults.")
 
-        # Initialize processors
-        processor = ImageProcessor(default_quality=95)
+    return ProcessingConfig(
+        **{k: v for k, v in defaults.items() if k != "supported_extensions"},
+        supported_extensions=set(defaults["supported_extensions"]),
+    )
 
-        # Statistics tracking
+
+class ImageProcessingManager:
+    def __init__(self, config: ProcessingConfig):
+        self.config = config
+        self.processor = ImageProcessor(default_quality=config.image_quality)
+        self.name_generator = ImageNameGenerator(
+            host=config.ai_host, model=config.ai_model
+        )
+
+    def identify_banner_by_dimensions(self, image_paths: List[Path]) -> Optional[Path]:
+        """Identify the banner image based on dimensions"""
+        max_area = 0
+        banner_image = None
+
+        for img_path in image_paths:
+            try:
+                dimensions = self.processor.get_image_dimensions(str(img_path))
+                area = dimensions[0] * dimensions[1]
+                if area > max_area:
+                    max_area = area
+                    banner_image = img_path
+            except Exception as e:
+                logger.warning(f"Could not check dimensions of {img_path.name}: {e}")
+
+        return banner_image
+
+    def generate_ai_name(self, image_path: str, retries: int = 0) -> Optional[str]:
+        """Generate AI-based name with retry mechanism"""
+        try:
+            new_name = self.name_generator.generate_name(image_path=image_path)
+            if not new_name:
+                raise ValueError("Empty name generated")
+            return self._clean_filename(new_name)
+        except Exception as e:
+            if retries < self.config.max_retries:
+                logger.warning(f"AI naming attempt {retries + 1} failed: {e}")
+                time.sleep(self.config.retry_delay)
+                return self.generate_ai_name(image_path, retries + 1)
+            return None
+
+    @staticmethod
+    def _clean_filename(name: str) -> str:
+        """Clean and format filename"""
+        clean_name = "".join(c for c in name if c.isalnum() or c in "- ").strip()
+        return clean_name.replace(" ", "-")
+
+    def process_single_image(self, image_path: Path, is_banner: bool = False) -> bool:
+        """
+        Process a single image including resizing and AI-based renaming
+
+        Args:
+            image_path: Path to the image
+            is_banner: Whether the image is a banner image
+
+        Returns:
+            bool: True if processing was successful, False otherwise
+        """
+        try:
+            # Determine target size based on image type
+            target_size = (
+                self.config.banner_size if is_banner else self.config.regular_size
+            )
+
+            logger.info(
+                f"Processing: {image_path.name} {'(banner)' if is_banner else ''}"
+            )
+
+            # Resize the image
+            temp_path = self.processor.resize_and_rename_image(
+                str(image_path),
+                target_size=target_size,
+                remove_original=False,  # Don't remove yet, we'll rename it
+            )
+
+            if not temp_path:
+                raise Exception("Image processing failed")
+
+            # Generate AI-based name
+            new_name = self.generate_ai_name(temp_path)
+            if new_name:
+                # Add banner indicator to filename if it's a banner
+                if is_banner:
+                    new_name = f"banner-{new_name}"
+
+                # Create final path with new name
+                final_path = image_path.parent / f"{new_name}.jpg"
+
+                # Rename the processed image
+                os.rename(temp_path, final_path)
+
+                # Remove original only after successful rename
+                if os.path.exists(str(image_path)):
+                    os.remove(str(image_path))
+
+                logger.info(f"Renamed to: {final_path.name}")
+            else:
+                # If AI naming fails, keep the processed image with original name
+                logger.warning("AI naming failed, keeping original name")
+                success = True  # Still count as success since image was processed
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error processing {image_path.name}: {str(e)}")
+            return False
+
+    def process_directory(
+        self, directory: Path, banner_name: Optional[str] = None
+    ) -> Tuple[int, int, List[str]]:
+        """
+        Process all images in a directory
+
+        Args:
+            directory (Path): Directory path to process
+            banner_name (Optional[str]): Name pattern to identify banner images
+
+        Returns:
+            Tuple[int, int, List[str]]: (success_count, error_count, errors)
+        """
         success_count = 0
         error_count = 0
         errors = []
 
-        # Process each subfolder
-        for subfolder_path in Path(root_folder).iterdir():
-            if not subfolder_path.is_dir():
-                continue
-
-            print(f"\nProcessing folder: {subfolder_path}")
-
-            # Collect all valid image paths in the subfolder
+        try:
+            # Collect valid image paths
             image_paths = [
                 p
-                for p in subfolder_path.glob("*")
-                if p.suffix.lower() in image_extensions
+                for p in directory.glob("*")
+                if p.suffix.lower() in self.config.supported_extensions
             ]
 
             if not image_paths:
-                continue
+                logger.info(f"No valid images found in directory: {directory}")
+                return success_count, error_count, errors
 
-            # Identify banner image
+            # First identify banner image for the directory
             banner_image = None
             if banner_name:
                 # Find banner by name pattern
@@ -92,117 +215,143 @@ def process_images(root_folder, banner_name=None):
                 ]
                 if banner_candidates:
                     banner_image = banner_candidates[0]
+                    logger.info(f"Found banner image by name: {banner_image.name}")
 
             if not banner_image:
                 # If no banner found by name (or no name provided), use largest image
-                banner_image = identify_banner_by_dimensions(processor, image_paths)
+                banner_image = self.identify_banner_by_dimensions(image_paths)
                 if banner_image:
-                    print(f"Identified banner image by dimensions: {banner_image.name}")
+                    logger.info(
+                        f"Identified banner image by dimensions: {banner_image.name}"
+                    )
 
-            # Process each image in the subfolder
-            for image_path in image_paths:
+            # Process images with progress bar
+            for image_path in tqdm(image_paths, desc=f"Processing {directory.name}"):
                 try:
-                    # Determine if this is the banner image
-                    is_banner = image_path == banner_image
-                    target_size = (1200, 502) if is_banner else (720, 480)
-
-                    print(
-                        f"Processing: {image_path.name} {'(banner)' if is_banner else ''}"
+                    processed = self.process_single_image(
+                        image_path, is_banner=(image_path == banner_image)
                     )
-
-                    # First resize the image
-                    temp_path = processor.resize_and_rename_image(
-                        str(image_path),
-                        target_size=target_size,
-                        remove_original=False,  # Don't remove yet, we'll rename it
-                    )
-
-                    if not temp_path:
-                        raise Exception("Image processing failed")
-
-                    # Generate AI-based name
-                    try:
-                        new_name = ing.generate_name(image_path=temp_path)
-                        if not new_name:
-                            raise ValueError("AI name generation returned empty name")
-
-                        # Clean the generated name
-                        new_name = "".join(
-                            c for c in new_name if c.isalnum() or c in "- "
-                        ).strip()
-                        new_name = new_name.replace(" ", "-")
-
-                        # Add banner indicator to filename if it's a banner
-                        if is_banner:
-                            new_name = f"banner-{new_name}"
-
-                        # Create final path with new name
-                        final_path = image_path.parent / f"{new_name}.jpg"
-
-                        # Rename the processed image
-                        os.rename(temp_path, final_path)
-
-                        # Remove original only after successful rename
-                        if os.path.exists(str(image_path)):
-                            os.remove(str(image_path))
-
-                        print(f"Renamed to: {final_path.name}")
+                    if processed:
                         success_count += 1
-
-                    except Exception as e:
-                        # If AI naming fails, keep the processed image with original name
-                        print(f"Warning: AI naming failed, keeping original name: {e}")
-                        success_count += (
-                            1  # Still count as success since image was processed
-                        )
-
+                    else:
+                        error_count += 1
                 except Exception as e:
-                    error_msg = f"Error processing {image_path.name}: {str(e)}"
-                    print(f"Error: {error_msg}")
+                    error_msg = f"Error processing {image_path.name}: {str(e)}\n{traceback.format_exc()}"
+                    logger.error(error_msg)
                     errors.append(error_msg)
                     error_count += 1
 
+        except Exception as e:
+            error_msg = f"Error processing directory {directory}: {str(e)}\n{traceback.format_exc()}"
+            logger.error(error_msg)
+            errors.append(error_msg)
+            error_count += 1
+
         return success_count, error_count, errors
 
-    except Exception as e:
-        return 0, 1, [f"Critical error: {str(e)}"]
+    def process_images(
+        self, root_folder: str, banner_name: Optional[str] = None
+    ) -> Tuple[int, int, List[str]]:
+        """
+        Process images in all subfolders
+
+        Args:
+            root_folder (str): Path to root folder containing subfolders with images
+            banner_name (Optional[str]): Name pattern to identify banner images
+
+        Returns:
+            Tuple[int, int, List[str]]: (total_success, total_errors, all_errors)
+        """
+        start_time = time.time()
+        total_success = 0
+        total_errors = 0
+        all_errors = []
+
+        try:
+            root_path = Path(root_folder).resolve()
+
+            # Validate root folder
+            if not root_path.exists():
+                raise ValueError(f"Path does not exist: {root_path}")
+            if not root_path.is_dir():
+                raise ValueError(f"Path is not a directory: {root_path}")
+            if not os.access(root_path, os.R_OK | os.W_OK):
+                raise ValueError(f"Insufficient permissions for path: {root_path}")
+
+            # Process each subfolder
+            for subfolder_path in root_path.iterdir():
+                if not subfolder_path.is_dir():
+                    continue
+
+                logger.info(f"\nProcessing folder: {subfolder_path}")
+                try:
+                    success, errors, error_list = self.process_directory(
+                        subfolder_path, banner_name
+                    )
+                    total_success += success
+                    total_errors += errors
+                    all_errors.extend(error_list)
+                except Exception as e:
+                    error_msg = f"Error processing subfolder {subfolder_path}: {str(e)}\n{traceback.format_exc()}"
+                    logger.error(error_msg)
+                    all_errors.append(error_msg)
+                    total_errors += 1
+
+            # Log completion time
+            duration = time.time() - start_time
+            logger.info(f"\nProcessing completed in {duration:.2f} seconds")
+
+        except Exception as e:
+            error_msg = (
+                f"Critical error in process_images: {str(e)}\n{traceback.format_exc()}"
+            )
+            logger.error(error_msg)
+            all_errors.append(error_msg)
+            total_errors += 1
+
+        return total_success, total_errors, all_errors
 
 
 def main():
-    """Main function to get user input and process images"""
+    """Main execution function"""
     try:
+        # Load configuration
+        config = load_config()
+        processor = ImageProcessingManager(config)
+
         # Get user input
         root_folder = input("Enter the root folder path: ").strip()
         banner_name = input(
             "Enter the banner image name pattern (press Enter to skip): "
         ).strip()
-
-        # Convert empty input to None
         banner_name = banner_name if banner_name else None
 
-        print("\nStarting image processing...")
-        print(
+        logger.info("\nStarting image processing...")
+        logger.info(
             f"Banner identification: {'Using name pattern: ' + banner_name if banner_name else 'Using image dimensions'}"
         )
 
-        success_count, error_count, errors = process_images(root_folder, banner_name)
+        # Process images
+        success_count, error_count, errors = processor.process_images(
+            root_folder, banner_name
+        )
 
         # Print summary
-        print("\nProcessing Summary:")
-        print(f"Successfully processed: {success_count} images")
-        print(f"Errors encountered: {error_count}")
+        logger.info("\nProcessing Summary:")
+        logger.info(f"Successfully processed: {success_count} images")
+        logger.info(f"Errors encountered: {error_count}")
 
         if errors:
-            print("\nError Details:")
+            logger.info("\nError Details:")
             for error in errors:
-                print(f"- {error}")
+                logger.error(f"- {error}")
 
     except KeyboardInterrupt:
-        print("\nProcess interrupted by user")
+        logger.warning("\nProcess interrupted by user")
     except Exception as e:
-        print(f"\nCritical error: {str(e)}")
+        logger.error(f"\nCritical error: {str(e)}")
     finally:
-        print("\nProcess completed")
+        logger.info("Process completed")
 
 
 if __name__ == "__main__":
