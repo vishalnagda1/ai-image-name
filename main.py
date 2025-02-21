@@ -464,7 +464,7 @@ def main():
         ).strip()
 
         output_dir = input(
-            "Enter the output directory for the CSV report (press Enter for current directory): "
+            "Enter the output directory for the CSV report (press Enter for root folder's parent folder): "
         ).strip()
 
         banner_name = banner_name if banner_name else None
@@ -481,7 +481,7 @@ def main():
                 print("Error: The specified folder does not exist.")
                 return
         else:
-            output_dir = destination_folder
+            output_dir = base_folder_name
 
         logger.info("\nStarting image processing...")
         logger.info(
