@@ -2,6 +2,7 @@ import csv
 import logging
 import os
 import re
+import shutil
 import time
 import traceback
 from dataclasses import dataclass
@@ -108,8 +109,8 @@ class ImageProcessingManager:
         """Generate AI-based name with retry mechanism"""
         try:
             new_name = self.name_generator.generate_name(image_path=image_path)
-            if not new_name:
-                raise ValueError("Empty name generated")
+            if len(new_name) > 60:
+                raise ValueError(f"Name '{new_name}' too long")
             return self._clean_filename(new_name)
         except Exception as e:
             if retries < self.config.max_retries:
@@ -122,7 +123,7 @@ class ImageProcessingManager:
     def _clean_filename(name: str) -> str:
         """Clean and format filename"""
         clean_name = "".join(c for c in name if c.isalnum() or c in "- ").strip()
-        return clean_name.replace(" ", "-")
+        return clean_name.replace(" ", "-").lower()
 
     def process_single_image(
         self, image_path: Path, is_banner: bool = False
@@ -404,6 +405,46 @@ class ImageProcessingManager:
         return total_success, total_errors, all_errors, report_path
 
 
+def copy_images_to_single_folder(source_path, destination_folder):
+    """
+    Copy all images from nested folders to a single destination folder.
+
+    Args:
+        source_path (str): Path to the root folder containing nested folders with images
+        destination_folder (str): Name of the new folder where images will be moved
+    """
+    # Create destination folder if it doesn't exist
+    if not os.path.exists(destination_folder):
+        os.makedirs(destination_folder)
+
+    # List of common image extensions
+    image_extensions = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff")
+
+    # Walk through all directories and subdirectories
+    for root, dirs, files in os.walk(source_path):
+        for file in files:
+            # Check if the file is an image
+            if file.lower().endswith(image_extensions):
+                # Get the full path of the source file
+                source_file = os.path.join(root, file)
+
+                # Generate a unique filename to avoid overwrites
+                base_name = os.path.basename(file)
+                name, ext = os.path.splitext(base_name)
+                counter = 1
+                new_name = base_name
+
+                # If file with same name exists, add number to filename
+                while os.path.exists(os.path.join(destination_folder, new_name)):
+                    new_name = f"{name}_{counter}{ext}"
+                    counter += 1
+
+                # Copy the file to destination
+                destination_file = os.path.join(destination_folder, new_name)
+                shutil.copy(source_file, destination_file)
+                print(f"Copied: {source_file} -> {destination_file}")
+
+
 def main():
     """Main execution function"""
     try:
@@ -413,15 +454,34 @@ def main():
 
         # Get user input
         root_folder = input("Enter the root folder path: ").strip()
+
+        if not os.path.exists(root_folder):
+            print("Error: The specified folder does not exist.")
+            return
+
         banner_name = input(
             "Enter the banner image name pattern (press Enter to skip): "
         ).strip()
+
         output_dir = input(
             "Enter the output directory for the CSV report (press Enter for current directory): "
         ).strip()
 
         banner_name = banner_name if banner_name else None
         output_dir = output_dir if output_dir else None
+
+        base_folder_name = os.path.basename(root_folder)
+        new_folder_name = f"{base_folder_name} - images"
+
+        destination_folder = os.path.dirname(root_folder)
+        destination_folder = os.path.join(destination_folder, new_folder_name)
+
+        if output_dir:
+            if not os.path.exists(output_dir):
+                print("Error: The specified folder does not exist.")
+                return
+        else:
+            output_dir = destination_folder
 
         logger.info("\nStarting image processing...")
         logger.info(
@@ -447,6 +507,19 @@ def main():
             logger.info("\nError Details:")
             for error in errors:
                 logger.error(f"- {error}")
+
+        # Check if folder exists
+        if os.path.exists(destination_folder):
+            for item in os.listdir(destination_folder):
+                item_path = os.path.join(destination_folder, item)
+                if os.path.isfile(item_path):
+                    os.remove(item_path)
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+        else:
+            os.makedirs(destination_folder, exist_ok=True)
+
+        copy_images_to_single_folder(root_folder, destination_folder)
 
     except KeyboardInterrupt:
         logger.warning("\nProcess interrupted by user")
