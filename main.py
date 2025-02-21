@@ -529,7 +529,7 @@ def main():
                 print("Error: The specified folder does not exist.")
                 return
         else:
-            output_dir = base_folder_name
+            output_dir = os.path.basename(root_folder)
 
         logger.info("\nStarting image processing...")
         logger.info(
