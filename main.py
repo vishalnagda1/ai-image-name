@@ -15,13 +15,31 @@ from tqdm import tqdm
 from ai_image_name import ImageNameGenerator
 from utils.image import ImageProcessor
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("image_processing.log")],
+# Configure logging with two handlers:
+# 1. File handler for all logs (INFO and above)
+# 2. Console handler only for ERROR level
+file_handler = logging.FileHandler("image_processing.log")
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
+    )
 )
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.ERROR)
+console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+
+# Configure root logger
+logging.basicConfig(level=logging.INFO, handlers=[file_handler, console_handler])
+
 logger = logging.getLogger(__name__)
+
+
+# Custom print function to handle non-error console output
+def console_print(message: str):
+    """Print message to console without going through logging"""
+    tqdm.write(message)
 
 
 @dataclass
@@ -441,6 +459,11 @@ class ImageProcessingManager:
                 f"Success rate: {(total_success / (total_success + total_errors)) * 100:.1f}%"
             )
 
+            if all_errors:
+                console_print("\nErrors encountered during processing:")
+                for error in all_errors:
+                    console_print(f"- {error}")
+
         except Exception as e:
             error_msg = (
                 f"Critical error in process_images: {str(e)}\n{traceback.format_exc()}"
@@ -490,7 +513,7 @@ def copy_images_to_single_folder(source_path, destination_folder):
                 # Copy the file to destination
                 destination_file = os.path.join(destination_folder, new_name)
                 shutil.copy(source_file, destination_file)
-                print(f"Copied: {source_file} -> {destination_file}")
+                logger.info(f"Copied: {source_file} -> {destination_file}")
 
 
 def main():
@@ -504,13 +527,12 @@ def main():
         root_folder = input("Enter the root folder path: ").strip()
 
         if not os.path.exists(root_folder):
-            print("Error: The specified folder does not exist.")
+            console_print("Error: The specified folder does not exist.")
             return
 
         banner_name = input(
             "Enter the banner image name pattern (press Enter to skip): "
         ).strip()
-
         output_dir = input(
             "Enter the output directory for the CSV report (press Enter for root folder's parent folder): "
         ).strip()
@@ -524,12 +546,9 @@ def main():
         destination_folder = os.path.dirname(root_folder)
         destination_folder = os.path.join(destination_folder, new_folder_name)
 
-        if output_dir:
-            if not os.path.exists(output_dir):
-                print("Error: The specified folder does not exist.")
-                return
-        else:
-            output_dir = os.path.basename(root_folder)
+        if output_dir and not os.path.exists(output_dir):
+            console_print("Error: The specified output directory does not exist.")
+            return
 
         logger.info("\nStarting image processing...")
         logger.info(
@@ -552,11 +571,11 @@ def main():
             logger.warning("Failed to generate processing report")
 
         if errors:
-            logger.info("\nError Details:")
+            console_print("\nError Details:")
             for error in errors:
-                logger.error(f"- {error}")
+                console_print(f"- {error}")
 
-        # Check if folder exists
+        # Clean up and prepare destination folder
         if os.path.exists(destination_folder):
             for item in os.listdir(destination_folder):
                 item_path = os.path.join(destination_folder, item)
@@ -567,12 +586,13 @@ def main():
         else:
             os.makedirs(destination_folder, exist_ok=True)
 
+        # Copy processed images to final destination
         copy_images_to_single_folder(root_folder, destination_folder)
 
     except KeyboardInterrupt:
-        logger.warning("\nProcess interrupted by user")
+        console_print("\nProcess interrupted by user")
     except Exception as e:
-        logger.error(f"\nCritical error: {str(e)}")
+        logger.error(f"Critical error: {str(e)}")
     finally:
         logger.info("Process completed")
 
