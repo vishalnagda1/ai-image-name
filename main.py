@@ -229,7 +229,12 @@ class ImageProcessingManager:
                     )
 
             # Process images with progress bar
-            for image_path in tqdm(image_paths, desc=f"Processing {directory.name}"):
+            for image_path in tqdm(
+                image_paths,
+                desc=f"Processing {directory.name}",
+                position=2,
+                leave=False,
+            ):
                 try:
                     is_banner = image_path == banner_image
                     processed, final_path = self.process_single_image(
@@ -367,24 +372,63 @@ class ImageProcessingManager:
             if not os.access(root_path, os.R_OK | os.W_OK):
                 raise ValueError(f"Insufficient permissions for path: {root_path}")
 
-            # Process each subfolder
-            for subfolder_path in root_path.iterdir():
-                if not subfolder_path.is_dir():
-                    continue
+            # Count total images across all folders for overall progress
+            total_images = 0
+            subfolders = [f for f in root_path.iterdir() if f.is_dir()]
 
+            logger.info("Counting total images...")
+            for subfolder_path in subfolders:
+                image_paths = [
+                    p
+                    for p in subfolder_path.glob("*")
+                    if p.suffix.lower() in self.config.supported_extensions
+                ]
+                total_images += len(image_paths)
+
+            logger.info(f"Found {total_images} images in {len(subfolders)} folders")
+
+            # Initialize overall progress bar
+            overall_progress = tqdm(
+                total=total_images, desc="Overall Progress", position=0, leave=True
+            )
+
+            # Process each subfolder
+            for subfolder_path in tqdm(
+                subfolders, desc="Folders", position=1, leave=True
+            ):
                 logger.info(f"\nProcessing folder: {subfolder_path}")
                 try:
+                    # Get number of images in current folder for subfolder progress
+                    folder_images = [
+                        p
+                        for p in subfolder_path.glob("*")
+                        if p.suffix.lower() in self.config.supported_extensions
+                    ]
+
+                    if not folder_images:
+                        logger.info(
+                            f"No valid images found in directory: {subfolder_path}"
+                        )
+                        continue
+
+                    # Process directory with progress tracking
                     success, errors, error_list = self.process_directory(
                         subfolder_path, banner_name
                     )
+
+                    # Update counts and progress
                     total_success += success
                     total_errors += errors
                     all_errors.extend(error_list)
+                    overall_progress.update(len(folder_images))
+
                 except Exception as e:
                     error_msg = f"Error processing subfolder {subfolder_path}: {str(e)}\n{traceback.format_exc()}"
                     logger.error(error_msg)
                     all_errors.append(error_msg)
                     total_errors += 1
+
+            overall_progress.close()
 
             # Generate report after processing
             report_path = self.create_processing_report(output_dir)
@@ -392,6 +436,10 @@ class ImageProcessingManager:
             # Log completion time
             duration = time.time() - start_time
             logger.info(f"\nProcessing completed in {duration:.2f} seconds")
+            logger.info(f"Total images processed: {total_success + total_errors}")
+            logger.info(
+                f"Success rate: {(total_success / (total_success + total_errors)) * 100:.1f}%"
+            )
 
         except Exception as e:
             error_msg = (
