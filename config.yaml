@@ -1,6 +1,6 @@
 # AI Service Configuration
 ai_host: "http://192.168.1.50:11435"
-ai_model: "llava:34b"
+ai_model: "llava:7b"
 
 # Image Processing Settings
 image_quality: 95

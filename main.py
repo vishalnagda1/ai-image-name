@@ -42,7 +42,7 @@ def load_config(config_path: str = "config.yaml") -> ProcessingConfig:
     """Load configuration from YAML file or use defaults"""
     defaults = {
         "ai_host": "http://192.168.1.50:11435",
-        "ai_model": "llava:34b",
+        "ai_model": "llava:7b",
         "image_quality": 95,
         "banner_size": (1200, 502),
         "regular_size": (720, 480),
