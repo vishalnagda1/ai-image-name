@@ -1,5 +1,5 @@
 # AI Service Configuration
-ai_host: "http://192.168.1.50:11435"
+ai_host: "https://aiq-ollama.visions.team"
 ai_model: "llava:7b"
 
 # Image Processing Settings
